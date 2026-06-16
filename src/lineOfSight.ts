@@ -32,8 +32,7 @@ const TILE_SIZE = 20;
 const MAP_WIDTH = 34;
 const MAP_HEIGHT = 34;
 const TICKER_WIDTH = 9;
-const TICKER_START_X = MAP_WIDTH * TILE_SIZE;
-const CANVAS_WIDTH = TICKER_START_X + TICKER_WIDTH * TILE_SIZE;
+const CANVAS_WIDTH = MAP_WIDTH * TILE_SIZE;
 const CANVAS_HEIGHT = TILE_SIZE * MAP_HEIGHT;
 
 const CHECKER = true;
@@ -85,9 +84,9 @@ export class LineOfSight {
   mapElement: HTMLCanvasElement | null = null;
   ctx: CanvasRenderingContext2D | null = null;
   subscribers: VoidFunction[] = [];
-  
+
   images: (HTMLImageElement | null)[] = [];
-  
+
   hasLoadedSpawns = false;
 
   public initDOM(mapElement: HTMLCanvasElement) {
@@ -164,9 +163,11 @@ export class LineOfSight {
       // copy relevant play area to exportCanvas
       const imageContent = sourceContext.getImageData(bounds.minX * TILE_SIZE, bounds.minY * TILE_SIZE, playAreaWidth, playAreaHeight);
       exportCanvas.getContext('2d')?.putImageData(imageContent, 0, 0);
-      // copy ticker to exportCanvas
-      const tickerContent = sourceContext.getImageData(TICKER_START_X, 0, TICKER_WIDTH * TILE_SIZE, CANVAS_HEIGHT);
-      exportCanvas.getContext('2d')?.putImageData(tickerContent, playAreaWidth, 0);
+      // draw ticker to exportCanvas
+      const exportCtx = exportCanvas.getContext('2d');
+      if (exportCtx) {
+        this.drawTickerToContext(exportCtx, playAreaWidth);
+      }
       return false;
     }, () => {
         this.replay = null;
@@ -207,7 +208,7 @@ export class LineOfSight {
   public setShowVenatorBounce = (show: boolean) => {
     this.showVenatorBounce = show;
   };
-  
+
   private updateUi() {
     // currently, we always fire subscriber events
     this.onUpdateSubscribers();
@@ -222,7 +223,9 @@ export class LineOfSight {
       hasReplay: !!this.replay && this.replayTick !== null && !!this.replay[this.replayTick],
       replayLength: this.replay?.length ?? null,
       canSaveReplay: !this.replayAuto && this.tape.length > 0 && this.tape.length <= 32,
-      replayTick: this.replayTick ?? 0
+      replayTick: this.replayTick ?? 0,
+      tapeLength: this.tape.length,
+      tapeSelectionRange: this.tapeSelectionRange,
     }
     // check if any UI state has changed
     if (!this._lastUiState || Object.entries(uiState).some(([k, v]) => this._lastUiState[k] !== v)) {
@@ -274,9 +277,6 @@ export class LineOfSight {
         ];
         this.cursorLocation = null;
       }
-    } else if (x <= CANVAS_WIDTH && y >= 0 && y <= this.tape.length + 1) {
-      const tapeIndex = Math.floor(y);
-      this.tapeSelectionRange = [tapeIndex];
     }
     this.drawWave();
   };
@@ -286,16 +286,23 @@ export class LineOfSight {
     var y = e.nativeEvent.offsetY;
     x = Math.floor(x / TILE_SIZE);
     y = Math.floor(y / TILE_SIZE);
-    if (this.tapeSelectionRange?.length === 1) {
-      if (x >= MAP_WIDTH && x <= CANVAS_WIDTH && y >= 0 && y <= CANVAS_HEIGHT) {
-        const endY = Math.min(y + 1, this.tape.length);
-        this.tapeSelectionRange = [this.tapeSelectionRange[0], endY];
-      }
-    }
     this.draggingNpcIndex = null;
     this.draggingNpcOffset = null;
     this.drawWave();
   };
+
+  public onTickerMouseDown(tickIndex: number) {
+    this.tapeSelectionRange = [tickIndex];
+    this.updateUi();
+  }
+
+  public onTickerMouseUp(tickIndex: number) {
+    if (this.tapeSelectionRange?.length === 1) {
+      const endY = Math.min(tickIndex + 1, this.tape.length);
+      this.tapeSelectionRange = [this.tapeSelectionRange[0], endY];
+      this.updateUi();
+    }
+  }
 
   public onCanvasDblClick(e: React.MouseEvent) {
     var x = e.nativeEvent.offsetX;
@@ -460,7 +467,7 @@ export class LineOfSight {
       hashParts.push(encodeCoordinate(this.selected));
     }
 
-    // Add flags if enabled  
+    // Add flags if enabled
     if (this.fromWaveStart) {
       hashParts.push("_ws");
     }
@@ -1072,6 +1079,41 @@ export class LineOfSight {
     this.ctx.globalAlpha = 1;
   }
 
+  private drawTickerToContext(ctx: CanvasRenderingContext2D, xOffset: number) {
+    for (var i = 0; i < this.tape.length; i++) {
+      if (this.fromWaveStart && i < DELAY_FIRST_ATTACK_TICKS) {
+        ctx.fillStyle = i % 2 == 0 ? "#666" : "#777";
+      } else {
+        ctx.fillStyle = i % 2 == 0 ? "#ddd" : "#eee";
+      }
+      ctx.fillRect(xOffset, TILE_SIZE * i, TILE_SIZE * TICKER_WIDTH, TILE_SIZE);
+      for (var j = 0; j < this.tape[i].length; j++) {
+        const value = this.tape[i][j];
+        var attacked = value & 0xff;
+        var t = this.mobs[j][2];
+        if (t > 0 && attacked) {
+          ctx.fillStyle = NPC_INFO[t].color;
+          ctx.fillRect(xOffset + TILE_SIZE * j, TILE_SIZE * i, TILE_SIZE, TILE_SIZE);
+        }
+        if (attacked && t === MANTICORE) {
+          const pattern = (value >> 8) & 0xff;
+          ctx.fillStyle = MANTICORE_ATTACKS[pattern];
+          ctx.beginPath();
+          ctx.arc(
+            xOffset + TILE_SIZE * (j + 0.5),
+            TILE_SIZE * (i + 0.5),
+            TILE_SIZE / 2,
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+          ctx.strokeStyle = "white";
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
   public drawWave() {
     this.updateUi();
     if (!this.ctx || !this.mapElement) {
@@ -1269,56 +1311,6 @@ export class LineOfSight {
           drawManticorePattern(colorPattern, this.cursorLocation[0], this.cursorLocation[1], isUncharged);
         }
       }
-      ctx.globalAlpha = 1;
-    }
-    // ticker tape
-    const offset = TICKER_START_X;
-    const tickerStartY = (idx: number) => TILE_SIZE * idx;
-    for (var i = 0; i < this.tape.length; i++) {
-      if (this.fromWaveStart && i < DELAY_FIRST_ATTACK_TICKS) {
-        ctx.fillStyle = i % 2 == 0 ? "#666" : "#777";
-      } else {
-        ctx.fillStyle = i % 2 == 0 ? "#ddd" : "#eee";
-      }
-      ctx.fillRect(offset, TILE_SIZE * i, TILE_SIZE * TICKER_WIDTH, TILE_SIZE);
-      for (var j = 0; j < this.tape[i].length; j++) {
-        const value = this.tape[i][j];
-        var attacked = value & 0xff;
-        var t = this.mobs[j][2];
-        if (t > 0 && attacked) {
-          ctx.fillStyle = NPC_INFO[t].color;
-          ctx.fillRect(offset + TILE_SIZE * j, tickerStartY(i), TILE_SIZE, TILE_SIZE);
-        }
-        if (attacked && t === MANTICORE) {
-          const pattern = (value >> 8) & 0xff;
-          ctx.fillStyle = MANTICORE_ATTACKS[pattern];
-          ctx.beginPath();
-          ctx.arc(
-            offset + TILE_SIZE * (j + 0.5),
-            TILE_SIZE * (i + 0.5),
-            TILE_SIZE / 2,
-            0,
-            Math.PI * 2
-          );
-          ctx.fill();
-          ctx.strokeStyle = "white";
-          ctx.stroke();
-        }
-      }
-    }
-    // ticker tape selection
-    if (this.tapeSelectionRange?.length) {
-      ctx.fillStyle = "yellow";
-      ctx.globalAlpha = 0.25;
-      const tapeStartY = this.tapeSelectionRange[0];
-      const tapeEndY =
-        this.tapeSelectionRange.length >= 2 ? this.tapeSelectionRange[1] : tapeStartY + 1;
-      ctx.fillRect(
-        offset,
-        tickerStartY(tapeStartY),
-        TILE_SIZE * TICKER_WIDTH,
-        (tapeEndY - tapeStartY) * TILE_SIZE
-      );
       ctx.globalAlpha = 1;
     }
     // mobs
