@@ -164,6 +164,13 @@ export function decodeURL(location: URL): DecodeURLResult {
   // Check flags
   const isFromWaveStart = hashParts?.includes("ws") || false;
   const isMantiMayhem3 = hashParts?.includes("mm3") || false;
+  const cdPart = hashParts?.find(p => p.startsWith("cd:"));
+  if (cdPart) {
+    const cooldowns = cdPart.slice(3).split(",").map(Number);
+    for (var i = 0; i < mobs.length && i < cooldowns.length; i++) {
+      mobs[i][5] = cooldowns[i];
+    }
+  }
 
   let playerCoordinates: Coordinates[] | null = null;
   let isReplay = false;
@@ -223,7 +230,7 @@ function decodeCoordinates(coords: number): Coordinates {
 }
 
 export function getReplayURL(replayData: ReplayData, fromWaveStart: boolean = false, mantimayhem3: boolean = false) {
-  const { playerPositions, mobSpecs } = replayData
+  const { playerPositions, mobSpecs, mobCooldowns } = replayData
   var url = getSpawnUrl(mobSpecs);
   url = url.concat("#");
   var playerLocations = playerPositions.map(encodeCoordinate);
@@ -252,6 +259,9 @@ export function getReplayURL(replayData: ReplayData, fromWaveStart: boolean = fa
   }
   if (mantimayhem3) {
     url = url.concat("_", "mm3");
+  }
+  if (mobCooldowns?.some(cd => cd !== 0)) {
+    url = url.concat("_cd:", mobCooldowns.join(","));
   }
   return url;
 }

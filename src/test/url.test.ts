@@ -177,6 +177,90 @@ describe("url tests", () => {
     });
   });
 
+  describe("cooldown encoding tests", () => {
+    test("replay url with no cooldowns omits _cd", () => {
+      const replay: ReplayData = {
+        mobSpecs: [createMob(0, 0, 1)],
+        playerPositions: [[0, 0]],
+        mobCooldowns: [0],
+      };
+      expect(getReplayURL(replay)).toBe("http://localhost:3000/?00001.#0");
+    });
+
+    test("replay url with non-zero cooldowns appends _cd", () => {
+      const replay: ReplayData = {
+        mobSpecs: [createMob(0, 0, 1), createMob(5, 5, 2)],
+        playerPositions: [[0, 0]],
+        mobCooldowns: [3, 0],
+      };
+      expect(getReplayURL(replay)).toBe("http://localhost:3000/?00001.05052.#0_cd:3,0");
+    });
+
+    test("_cd with _ws", () => {
+      const replay: ReplayData = {
+        mobSpecs: [createMob(0, 0, 1)],
+        playerPositions: [[0, 0]],
+        mobCooldowns: [5],
+      };
+      expect(getReplayURL(replay, true)).toBe("http://localhost:3000/?00001.#0_ws_cd:5");
+    });
+
+    test("_cd with _mm3", () => {
+      const replay: ReplayData = {
+        mobSpecs: [createMob(0, 0, 1)],
+        playerPositions: [[0, 0]],
+        mobCooldowns: [2],
+      };
+      expect(getReplayURL(replay, false, true)).toBe("http://localhost:3000/?00001.#0_mm3_cd:2");
+    });
+
+    test("_cd with _ws and _mm3", () => {
+      const replay: ReplayData = {
+        mobSpecs: [createMob(0, 0, 1)],
+        playerPositions: [[0, 0]],
+        mobCooldowns: [7],
+      };
+      expect(getReplayURL(replay, true, true)).toBe("http://localhost:3000/?00001.#0_ws_mm3_cd:7");
+    });
+  });
+
+  describe("cooldown decoding tests", () => {
+    test("decoding url with _cd sets mob cooldowns", () => {
+      const result = decodeURL(new URL("http://localhost:5173/?11092.#2311.2055_cd:3,0"));
+      expect(result.mobs[0][5]).toBe(3);
+    });
+
+    test("decoding url without _cd leaves cooldowns at 0", () => {
+      const result = decodeURL(new URL("http://localhost:5173/?11092.#2311.2055"));
+      expect(result.mobs[0][5]).toBe(0);
+    });
+
+    test("decoding url with _ws and _cd", () => {
+      const result = decodeURL(new URL("http://localhost:5173/?11092.#2311_ws_cd:5"));
+      expect(result.isFromWaveStart).toBe(true);
+      expect(result.mobs[0][5]).toBe(5);
+    });
+
+    test("decoding url with _mm3 and _cd", () => {
+      const result = decodeURL(new URL("http://localhost:5173/?11092.#2311_mm3_cd:4"));
+      expect(result.isMantiMayhem3).toBe(true);
+      expect(result.mobs[0][5]).toBe(4);
+    });
+
+    test("decoding url with _ws, _mm3, and _cd", () => {
+      const result = decodeURL(new URL("http://localhost:5173/?11092.#2311_ws_mm3_cd:9"));
+      expect(result.isFromWaveStart).toBe(true);
+      expect(result.isMantiMayhem3).toBe(true);
+      expect(result.mobs[0][5]).toBe(9);
+    });
+
+    test("_cd backwards compat: old urls without _cd still parse correctly", () => {
+      const result = decodeURL(new URL("http://localhost:5173/?11092.#2311.2055_ws"));
+      expect(result.mobs[0][5]).toBe(0);
+      expect(result.isFromWaveStart).toBe(true);
+    });
+  });
+
   describe("codec symmetry tests", () => {
     test("test 1", () => {
       const replay: ReplayData = {
