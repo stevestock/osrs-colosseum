@@ -138,6 +138,7 @@ export type DecodeURLResult = {
   isMantiMayhem3: boolean;
   playerCoordinates: Coordinates[] | null;
   isReplay: boolean;
+  mobTicksRemaining: number[];
 }
 export function decodeURL(location: URL): DecodeURLResult {
   const mobSpawns = location.search
@@ -164,11 +165,18 @@ export function decodeURL(location: URL): DecodeURLResult {
   // Check flags
   const isFromWaveStart = hashParts?.includes("ws") || false;
   const isMantiMayhem3 = hashParts?.includes("mm3") || false;
+  const mobTicksRemaining = mobs.map(() => 0);
   const cdPart = hashParts?.find(p => p.startsWith("cd:"));
   if (cdPart) {
-    const cooldowns = cdPart.slice(3).split(",").map(Number);
-    for (var i = 0; i < mobs.length && i < cooldowns.length; i++) {
-      mobs[i][5] = cooldowns[i];
+    // Each entry is either "cooldown" or "cooldown:ticksRemaining" (the latter
+    // only present for a manticore mid-way through its 3-orb volley).
+    const entries = cdPart.slice(3).split(",");
+    for (var i = 0; i < mobs.length && i < entries.length; i++) {
+      const [cooldown, ticksRemaining] = entries[i].split(":").map(Number);
+      mobs[i][5] = cooldown;
+      if (!isNaN(ticksRemaining)) {
+        mobTicksRemaining[i] = ticksRemaining;
+      }
     }
   }
 
@@ -195,7 +203,8 @@ export function decodeURL(location: URL): DecodeURLResult {
     isFromWaveStart,
     isMantiMayhem3,
     playerCoordinates,
-    isReplay
+    isReplay,
+    mobTicksRemaining
   }
 }
 
@@ -230,7 +239,7 @@ function decodeCoordinates(coords: number): Coordinates {
 }
 
 export function getReplayURL(replayData: ReplayData, fromWaveStart: boolean = false, mantimayhem3: boolean = false) {
-  const { playerPositions, mobSpecs, mobCooldowns } = replayData
+  const { playerPositions, mobSpecs, mobCooldowns, mobTicksRemaining } = replayData
   var url = getSpawnUrl(mobSpecs);
   url = url.concat("#");
   var playerLocations = playerPositions.map(encodeCoordinate);
@@ -260,8 +269,13 @@ export function getReplayURL(replayData: ReplayData, fromWaveStart: boolean = fa
   if (mantimayhem3) {
     url = url.concat("_", "mm3");
   }
-  if (mobCooldowns?.some(cd => cd !== 0)) {
-    url = url.concat("_cd:", mobCooldowns.join(","));
+  if (mobCooldowns?.some(cd => cd !== 0) || mobTicksRemaining?.some(ticks => ticks !== 0)) {
+    const cooldowns = mobCooldowns ?? mobSpecs.map(() => 0);
+    const entries = cooldowns.map((cd, i) => {
+      const ticks = mobTicksRemaining?.[i] ?? 0; // manticore orb sequence only
+      return ticks !== 0 ? `${cd}:${ticks}` : `${cd}`;
+    });
+    url = url.concat("_cd:", entries.join(","));
   }
   return url;
 }

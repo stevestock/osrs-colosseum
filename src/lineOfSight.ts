@@ -62,6 +62,8 @@ export class LineOfSight {
   // tape for mobs
   tape: TapeEntry[] = [];
   cooldownTape: number[][] = [];
+  extraTape: MobExtra[][] = []; // manticore charge state only; null for other mob types
+  manticoreTicksRemainingTape: number[][] = []; // manticore orb sequence only; 0 for other mob types
   playerTape: Coordinates[] = [];
   tapeSelectionRange: number[] | null = null; // tape selection, [start, end. TODO remove
   initialMobCooldowns: number[] | null = null;
@@ -427,10 +429,20 @@ export class LineOfSight {
       return;
     }
     this.hasLoadedSpawns = true;
-    const { mobs: decodedMobs, isFromWaveStart, isMantiMayhem3, playerCoordinates, isReplay } = decodeURL(new URL(window.location.toString()));
+    const { mobs: decodedMobs, isFromWaveStart, isMantiMayhem3, playerCoordinates, isReplay, mobTicksRemaining } = decodeURL(new URL(window.location.toString()));
+    // sortMobs() reorders the array, so pair each mob with its decoded ticksRemaining
+    // by object identity (rather than index) before sorting.
+    const ticksRemainingByMob = new Map(decodedMobs.map((mob, i) => [mob, mobTicksRemaining[i] ?? 0]));
     this.mobs = decodedMobs;
     this.sortMobs();
     this.initialMobCooldowns = this.mobs.map(m => m[5]);
+    this.manticoreTicksRemaining = {};
+    this.mobs.forEach((mob, i) => {
+      const ticks = ticksRemainingByMob.get(mob) ?? 0;
+      if (mob[2] === MANTICORE && ticks > 0) {
+        this.manticoreTicksRemaining[i] = ticks;
+      }
+    });
     this.setFromWaveStart(isFromWaveStart);
     this.setMantimayhem3(isMantiMayhem3);
     if (!playerCoordinates) {
@@ -502,6 +514,13 @@ export class LineOfSight {
     // movement/attacks run. The actual state at the START of the selection (i.e.
     // before tick lowerBound runs) is whatever was recorded at the end of the
     // previous tick - or the mob's original spawn state, if lowerBound is 0.
+    const mobCooldowns = this.getSnapshotAtTick(this.cooldownTape, lowerBound, this.mobs.map(() => 0));
+    const mobTicksRemaining = this.getSnapshotAtTick(this.manticoreTicksRemainingTape, lowerBound, this.mobs.map(() => 0));
+    const mobExtras = this.getSnapshotAtTick(
+      this.extraTape,
+      lowerBound,
+      this.mobs.map((mob) => mob[2] === MANTICORE && mob[7] !== undefined ? mob[7] : mob[6])
+    );
     const mobSpecs = this.mobs.map((mob, mobIdx) => {
       let x = mob[3];
       let y = mob[4];
@@ -510,26 +529,20 @@ export class LineOfSight {
         x = (prevTick >> 16) & 0xff;
         y = (prevTick >> 24) & 0xff;
       }
-      return [
-        x,
-        y,
-        mob[2],
-        // Use original extra value for manticores if available
-        mob[2] === MANTICORE && mob[7] !== undefined ? mob[7] : mob[6],
-      ] as MobSpec;
+      return [x, y, mob[2], mobExtras[mobIdx]] as MobSpec;
     });
-    const mobCooldowns = this.getCooldownsAtTick(lowerBound);
-    return { playerPositions, mobSpecs, mobCooldowns };
+    return { playerPositions, mobSpecs, mobCooldowns, mobTicksRemaining };
   }
 
-  private getCooldownsAtTick(tickIndex: number): number[] {
-    if (tickIndex === 0 || this.cooldownTape.length === 0) {
-      return this.mobs.map(() => 0);
+  // Looks up the per-mob state recorded at the end of the tick before tickIndex,
+  // i.e. the state at the START of tickIndex (mobSpecs/mobCooldowns/mobTicksRemaining
+  // are all anchored to this same instant). Falls back when there's no tape yet.
+  private getSnapshotAtTick<T>(snapshotTape: T[][], tickIndex: number, fallback: T[]): T[] {
+    if (tickIndex === 0 || snapshotTape.length === 0) {
+      return fallback;
     }
-    // Same reasoning as mobSpecs above: the state at the START of tickIndex
-    // is what was recorded at the end of the previous tick.
-    const snapshotIndex = Math.min(tickIndex - 1, this.cooldownTape.length - 1);
-    return [...this.cooldownTape[snapshotIndex]];
+    const snapshotIndex = Math.min(tickIndex - 1, snapshotTape.length - 1);
+    return [...snapshotTape[snapshotIndex]];
   }
 
   public copyReplayURL() {
@@ -562,12 +575,12 @@ export class LineOfSight {
 
   private removeMob(index: number) {
     this.mobs.splice(index, 1);
-    this.tape = this.tape.map((entries) => {
-      return entries.filter((_mobData, i) => i !== index);
-    });
-    this.cooldownTape = this.cooldownTape.map((entries) => {
-      return entries.filter((_cd, i) => i !== index);
-    });
+    const removeIndex = <T,>(perTickEntries: T[][]) =>
+      perTickEntries.map((entries) => entries.filter((_entry, i) => i !== index));
+    this.tape = removeIndex(this.tape);
+    this.cooldownTape = removeIndex(this.cooldownTape);
+    this.extraTape = removeIndex(this.extraTape);
+    this.manticoreTicksRemainingTape = removeIndex(this.manticoreTicksRemainingTape);
   }
 
   private hasLOS(
@@ -984,6 +997,8 @@ export class LineOfSight {
       this.playerTape.push([this.selected[0], this.selected[1]]);
       this.tape.push(line);
       this.cooldownTape.push(this.mobs.map(m => m[5]));
+      this.extraTape.push(this.mobs.map(m => m[6]));
+      this.manticoreTicksRemainingTape.push(this.mobs.map((_m, idx) => this.manticoreTicksRemaining[idx] ?? 0));
     }
     this.tickCount++;
     if (draw) {
@@ -1045,6 +1060,8 @@ export class LineOfSight {
     this.manticoreTicksRemaining = {};
     this.tape = [];
     this.cooldownTape = [];
+    this.extraTape = [];
+    this.manticoreTicksRemainingTape = [];
     this.playerTape = [];
     this.tapeSelectionRange = null;
     this.tickCount = 0;

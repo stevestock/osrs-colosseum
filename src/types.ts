@@ -32,4 +32,5 @@ export type ReplayData = {
   mobSpecs: MobSpec[];
   playerPositions: Coordinates[];
   mobCooldowns?: number[];
+  mobTicksRemaining?: number[];
 }
